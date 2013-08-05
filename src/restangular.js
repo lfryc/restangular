@@ -463,7 +463,7 @@ module.provider('Restangular', function() {
         
         
         
-       this.$get = ['$http', '$q', function($http, $q) {
+       this.$get = ['$http', '$q', '$timeout', function($http, $q, $timeout) {
 
           function createServiceForConfiguration(config) {
               var service = {};
@@ -675,47 +675,61 @@ module.provider('Restangular', function() {
                   var callObj = obj || (operation === 'remove' ? undefined : stripRestangular(this));
                   var request = config.fullRequestInterceptor(callObj, operation, route, fetchUrl, 
                     headers || {}, resParams || {});
-                  
-                  var okCallback = function(response) {
-                      var resData = response.data;
-                      var elem = config.responseExtractor(resData, operation, route, fetchUrl);
-                      if (elem) {
 
-                        if (operation === "post" && !__this[config.restangularFields.restangularCollection]) {
-                          resolvePromise(deferred, response, restangularizeElem(__this, elem, what));
-                        } else {
-                          resolvePromise(deferred, response, restangularizeElem(__this[config.restangularFields.parentResource], elem, __this[config.restangularFields.route]));
-                        }  
-                        
-                      } else {
-                        resolvePromise(deferred, response, undefined);
+                  var deferredRequest = $q.defer();
+
+                  deferredRequest.promise.then(_.bind(function(request) {
+                      var okCallback = function(response) {
+                          var resData = response.data;
+                          var elem = config.responseExtractor(resData, operation, route, fetchUrl);
+                          if (elem) {
+
+                            if (operation === "post" && !__this[config.restangularFields.restangularCollection]) {
+                              resolvePromise(deferred, response, restangularizeElem(__this, elem, what));
+                            } else {
+                              resolvePromise(deferred, response, restangularizeElem(__this[config.restangularFields.parentResource], elem, __this[config.restangularFields.route]));
+                            }
+
+                          } else {
+                            resolvePromise(deferred, response, undefined);
+                          }
+                      };
+
+                      var errorCallback = function(response) {
+                          config.errorInterceptor(response);
+                          deferred.reject(response);
+                      };
+                      // Overring HTTP Method
+                      var callOperation = operation;
+                      var callHeaders = _.extend({}, request.headers);
+                      var isOverrideOperation = config.isOverridenMethod(operation);
+                      if (isOverrideOperation) {
+                        callOperation = 'post';
+                        callHeaders = _.extend(callHeaders, {'X-HTTP-Method-Override': operation});
                       }
-                  };
-                  
-                  var errorCallback = function(response) {
-                      config.errorInterceptor(response);
-                      deferred.reject(response);
-                  };
-                  // Overring HTTP Method
-                  var callOperation = operation;
-                  var callHeaders = _.extend({}, request.headers);
-                  var isOverrideOperation = config.isOverridenMethod(operation);
-                  if (isOverrideOperation) {
-                    callOperation = 'post';
-                    callHeaders = _.extend(callHeaders, {'X-HTTP-Method-Override': operation});
-                  }
-                  
-                  if (config.isSafe(operation)) {
-                    if (isOverrideOperation) {
-                      urlHandler.resource(this, $http, callHeaders, request.params, 
-                        what)[callOperation]({}).then(okCallback, errorCallback);
-                    } else {
-                      urlHandler.resource(this, $http, callHeaders, request.params, 
-                        what)[callOperation]().then(okCallback, errorCallback);
-                    }
+
+                      if (config.isSafe(operation)) {
+                        if (isOverrideOperation) {
+                          urlHandler.resource(this, $http, callHeaders, request.params,
+                            what)[callOperation]({}).then(okCallback, errorCallback);
+                        } else {
+                          urlHandler.resource(this, $http, callHeaders, request.params,
+                            what)[callOperation]().then(okCallback, errorCallback);
+                        }
+                      } else {
+                          urlHandler.resource(this, $http, callHeaders, request.params,
+                            what)[callOperation](request.element).then(okCallback, errorCallback);
+                      }
+                  }, this));
+
+                  if ('promise' in request) {
+                    request.promise.then(function(resolvedRequest) {
+                      deferredRequest.resolve(resolvedRequest);
+                    }, function() {
+                      deferredRequest.resolve(request);
+                    });
                   } else {
-                      urlHandler.resource(this, $http, callHeaders, request.params, 
-                        what)[callOperation](request.element).then(okCallback, errorCallback);
+                    deferredRequest.resolve(request);
                   }
                   
                   return restangularizePromise(deferred.promise);
