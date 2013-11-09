@@ -622,7 +622,7 @@ module.provider('Restangular', function() {
                   }, function(response) {
                       deferred.reject(response);
                   });
-                  
+
                   return restangularizePromise(deferred.promise, true)
               }
               
@@ -664,34 +664,32 @@ module.provider('Restangular', function() {
                   
                   return restangularizePromise(deferred.promise, true);
               }
-              
+
               function elemFunction(operation, what, params, obj, headers) {
                   var __this = this;
                   var deferred = $q.defer();
                   var resParams = params || {};
                   var route = what || this[config.restangularFields.route];
                   var fetchUrl = urlHandler.fetchUrl(this, what);
-                  
+
                   var callObj = obj || (operation === 'remove' ? undefined : stripRestangular(this));
-                  var request = config.fullRequestInterceptor(callObj, operation, route, fetchUrl, 
+                  var request = config.fullRequestInterceptor(callObj, operation, route, fetchUrl,
                     headers || {}, resParams || {});
 
-                  var deferredRequest = $q.defer();
-
-                  deferredRequest.promise.then(_.bind(function(request) {
+                  var processRequest = _.bind(function(request) {
                       var okCallback = function(response) {
                           var resData = response.data;
                           var elem = config.responseExtractor(resData, operation, route, fetchUrl);
                           if (elem) {
 
-                            if (operation === "post" && !__this[config.restangularFields.restangularCollection]) {
-                              resolvePromise(deferred, response, restangularizeElem(__this, elem, what));
-                            } else {
-                              resolvePromise(deferred, response, restangularizeElem(__this[config.restangularFields.parentResource], elem, __this[config.restangularFields.route]));
-                            }
+                              if (operation === "post" && !__this[config.restangularFields.restangularCollection]) {
+                                resolvePromise(deferred, response, restangularizeElem(__this, elem, what));
+                              } else {
+                                resolvePromise(deferred, response, restangularizeElem(__this[config.restangularFields.parentResource], elem, __this[config.restangularFields.route]));
+                              }
 
                           } else {
-                            resolvePromise(deferred, response, undefined);
+                              resolvePromise(deferred, response, undefined);
                           }
                       };
 
@@ -704,34 +702,40 @@ module.provider('Restangular', function() {
                       var callHeaders = _.extend({}, request.headers);
                       var isOverrideOperation = config.isOverridenMethod(operation);
                       if (isOverrideOperation) {
-                        callOperation = 'post';
-                        callHeaders = _.extend(callHeaders, {'X-HTTP-Method-Override': operation});
+                          callOperation = 'post';
+                          callHeaders = _.extend(callHeaders, {'X-HTTP-Method-Override': operation});
                       }
 
                       if (config.isSafe(operation)) {
-                        if (isOverrideOperation) {
-                          urlHandler.resource(this, $http, callHeaders, request.params,
-                            what)[callOperation]({}).then(okCallback, errorCallback);
+                          if (isOverrideOperation) {
+                              urlHandler.resource(this, $http, callHeaders, request.params,
+                                what)[callOperation]({}).then(okCallback, errorCallback);
+                          } else {
+                              urlHandler.resource(this, $http, callHeaders, request.params,
+                                what)[callOperation]().then(okCallback, errorCallback);
+                          }
                         } else {
-                          urlHandler.resource(this, $http, callHeaders, request.params,
-                            what)[callOperation]().then(okCallback, errorCallback);
-                        }
-                      } else {
-                          urlHandler.resource(this, $http, callHeaders, request.params,
-                            what)[callOperation](request.element).then(okCallback, errorCallback);
+                            urlHandler.resource(this, $http, callHeaders, request.params,
+                              what)[callOperation](request.element).then(okCallback, errorCallback);
                       }
-                  }, this));
+                  }, this);
+
+
+                  var deferredRequest = $q.defer();
+                  deferredRequest.promise.then(processRequest);
 
                   if ('promise' in request) {
-                    request.promise.then(function(resolvedRequest) {
-                      deferredRequest.resolve(resolvedRequest);
-                    }, function() {
-                      deferredRequest.resolve(request);
-                    });
+                      request.promise.then(function(resolvedRequest) {
+                          deferredRequest.resolve(resolvedRequest);
+                      }, function(e) {
+                          deferredRequest.reject(e);
+                      });
                   } else {
-                    deferredRequest.resolve(request);
+                      $timeout(function() {
+                          processRequest(request);
+                      });
                   }
-                  
+
                   return restangularizePromise(deferred.promise);
               }
               
