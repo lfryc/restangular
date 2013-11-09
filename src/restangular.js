@@ -638,30 +638,47 @@ module.provider('Restangular', function() {
                   var request = config.fullRequestInterceptor(null, operation,
                       whatFetched, url, headers || {}, reqParams || {});
 
-                  urlHandler.resource(this, $http, request.headers, request.params, what).getList().then(function(response) {
-                      var resData = response.data;
-                      var data = config.responseExtractor(resData, operation, whatFetched, url);
-                      var processedData = _.map(data, function(elem) {
-                          if (!__this[config.restangularFields.restangularCollection]) {
-                              return restangularizeElem(__this, elem, what);
-                          } else {
-                              return restangularizeElem(__this[config.restangularFields.parentResource],
-                                elem, __this[config.restangularFields.route]);
-                          }
-                          
-                      });
+                  var processRequest = _.bind(function(request) {
+                      urlHandler.resource(this, $http, request.headers, request.params, what).getList().then(function(response) {
+                          var resData = response.data;
+                          var data = config.responseExtractor(resData, operation, whatFetched, url);
+                          var processedData = _.map(data, function(elem) {
+                              if (!__this[config.restangularFields.restangularCollection]) {
+                                  return restangularizeElem(__this, elem, what);
+                              } else {
+                                  return restangularizeElem(__this[config.restangularFields.parentResource],
+                                    elem, __this[config.restangularFields.route]);
+                              }
 
-                      processedData = _.extend(data, processedData);
-                      if (!__this[config.restangularFields.restangularCollection]) {
-                          resolvePromise(deferred, response, restangularizeCollection(__this, processedData, what));
-                      } else {
-                          resolvePromise(deferred, response, restangularizeCollection(null, processedData, __this[config.restangularFields.route]));
-                      }
-                  }, function error(response) {
-                      config.errorInterceptor(response);
-                      deferred.reject(response);
-                  });
-                  
+                          });
+
+                          processedData = _.extend(data, processedData);
+                          if (!__this[config.restangularFields.restangularCollection]) {
+                              resolvePromise(deferred, response, restangularizeCollection(__this, processedData, what));
+                          } else {
+                              resolvePromise(deferred, response, restangularizeCollection(null, processedData, __this[config.restangularFields.route]));
+                          }
+                      }, function error(response) {
+                          config.errorInterceptor(response);
+                          deferred.reject(response);
+                      });
+                  }, this);
+
+                  var deferredRequest = $q.defer();
+                  deferredRequest.promise.then(processRequest);
+
+                  if ('promise' in request) {
+                      request.promise.then(function(resolvedRequest) {
+                          deferredRequest.resolve(resolvedRequest);
+                      }, function(e) {
+                          deferredRequest.reject(e);
+                      });
+                  } else {
+                      $timeout(function() {
+                          processRequest(request);
+                      });
+                  }
+
                   return restangularizePromise(deferred.promise, true);
               }
 
