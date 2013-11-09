@@ -1,6 +1,6 @@
 /**
  * Restfull Resources service for AngularJS apps
- * @version v1.0.10 - 2013-07-30
+ * @version v1.0.10.2 - 2013-11-09
  * @link https://github.com/mgonto/restangular
  * @author Martin Gontovnikas <martin@gonto.com.ar>
  * @license MIT License, http://www.opensource.org/licenses/MIT
@@ -470,7 +470,7 @@ module.provider('Restangular', function() {
         
         
         
-       this.$get = ['$http', '$q', function($http, $q) {
+       this.$get = ['$http', '$q', '$timeout', function($http, $q, $timeout) {
 
           function createServiceForConfiguration(config) {
               var service = {};
@@ -629,7 +629,7 @@ module.provider('Restangular', function() {
                   }, function(response) {
                       deferred.reject(response);
                   });
-                  
+
                   return restangularizePromise(deferred.promise, true)
               }
               
@@ -645,86 +645,121 @@ module.provider('Restangular', function() {
                   var request = config.fullRequestInterceptor(null, operation,
                       whatFetched, url, headers || {}, reqParams || {});
 
-                  urlHandler.resource(this, $http, request.headers, request.params, what).getList().then(function(response) {
-                      var resData = response.data;
-                      var data = config.responseExtractor(resData, operation, whatFetched, url);
-                      var processedData = _.map(data, function(elem) {
-                          if (!__this[config.restangularFields.restangularCollection]) {
-                              return restangularizeElem(__this, elem, what);
-                          } else {
-                              return restangularizeElem(__this[config.restangularFields.parentResource],
-                                elem, __this[config.restangularFields.route]);
-                          }
-                          
-                      });
+                  var processRequest = _.bind(function(request) {
+                      urlHandler.resource(this, $http, request.headers, request.params, what).getList().then(function(response) {
+                          var resData = response.data;
+                          var data = config.responseExtractor(resData, operation, whatFetched, url);
+                          var processedData = _.map(data, function(elem) {
+                              if (!__this[config.restangularFields.restangularCollection]) {
+                                  return restangularizeElem(__this, elem, what);
+                              } else {
+                                  return restangularizeElem(__this[config.restangularFields.parentResource],
+                                    elem, __this[config.restangularFields.route]);
+                              }
 
-                      processedData = _.extend(data, processedData);
-                      if (!__this[config.restangularFields.restangularCollection]) {
-                          resolvePromise(deferred, response, restangularizeCollection(__this, processedData, what));
-                      } else {
-                          resolvePromise(deferred, response, restangularizeCollection(null, processedData, __this[config.restangularFields.route]));
-                      }
-                  }, function error(response) {
-                      config.errorInterceptor(response);
-                      deferred.reject(response);
-                  });
-                  
+                          });
+
+                          processedData = _.extend(data, processedData);
+                          if (!__this[config.restangularFields.restangularCollection]) {
+                              resolvePromise(deferred, response, restangularizeCollection(__this, processedData, what));
+                          } else {
+                              resolvePromise(deferred, response, restangularizeCollection(null, processedData, __this[config.restangularFields.route]));
+                          }
+                      }, function error(response) {
+                          config.errorInterceptor(response);
+                          deferred.reject(response);
+                      });
+                  }, this);
+
+                  var deferredRequest = $q.defer();
+                  deferredRequest.promise.then(processRequest);
+
+                  if ('promise' in request) {
+                      request.promise.then(function(resolvedRequest) {
+                          deferredRequest.resolve(resolvedRequest);
+                      }, function(e) {
+                          deferredRequest.reject(e);
+                      });
+                  } else {
+                      $timeout(function() {
+                          processRequest(request);
+                      });
+                  }
+
                   return restangularizePromise(deferred.promise, true);
               }
-              
+
               function elemFunction(operation, what, params, obj, headers) {
                   var __this = this;
                   var deferred = $q.defer();
                   var resParams = params || {};
                   var route = what || this[config.restangularFields.route];
                   var fetchUrl = urlHandler.fetchUrl(this, what);
-                  
-                  var callObj = obj || (operation === 'remove' ? undefined : stripRestangular(this));
-                  var request = config.fullRequestInterceptor(callObj, operation, route, fetchUrl, 
-                    headers || {}, resParams || {});
-                  
-                  var okCallback = function(response) {
-                      var resData = response.data;
-                      var elem = config.responseExtractor(resData, operation, route, fetchUrl);
-                      if (elem) {
 
-                        if (operation === "post" && !__this[config.restangularFields.restangularCollection]) {
-                          resolvePromise(deferred, response, restangularizeElem(__this, elem, what));
-                        } else {
-                          resolvePromise(deferred, response, restangularizeElem(__this[config.restangularFields.parentResource], elem, __this[config.restangularFields.route]));
-                        }  
-                        
-                      } else {
-                        resolvePromise(deferred, response, undefined);
+                  var callObj = obj || (operation === 'remove' ? undefined : stripRestangular(this));
+                  var request = config.fullRequestInterceptor(callObj, operation, route, fetchUrl,
+                    headers || {}, resParams || {});
+
+                  var processRequest = _.bind(function(request) {
+                      var okCallback = function(response) {
+                          var resData = response.data;
+                          var elem = config.responseExtractor(resData, operation, route, fetchUrl);
+                          if (elem) {
+
+                              if (operation === "post" && !__this[config.restangularFields.restangularCollection]) {
+                                resolvePromise(deferred, response, restangularizeElem(__this, elem, what));
+                              } else {
+                                resolvePromise(deferred, response, restangularizeElem(__this[config.restangularFields.parentResource], elem, __this[config.restangularFields.route]));
+                              }
+
+                          } else {
+                              resolvePromise(deferred, response, undefined);
+                          }
+                      };
+
+                      var errorCallback = function(response) {
+                          config.errorInterceptor(response);
+                          deferred.reject(response);
+                      };
+                      // Overring HTTP Method
+                      var callOperation = operation;
+                      var callHeaders = _.extend({}, request.headers);
+                      var isOverrideOperation = config.isOverridenMethod(operation);
+                      if (isOverrideOperation) {
+                          callOperation = 'post';
+                          callHeaders = _.extend(callHeaders, {'X-HTTP-Method-Override': operation});
                       }
-                  };
-                  
-                  var errorCallback = function(response) {
-                      config.errorInterceptor(response);
-                      deferred.reject(response);
-                  };
-                  // Overring HTTP Method
-                  var callOperation = operation;
-                  var callHeaders = _.extend({}, request.headers);
-                  var isOverrideOperation = config.isOverridenMethod(operation);
-                  if (isOverrideOperation) {
-                    callOperation = 'post';
-                    callHeaders = _.extend(callHeaders, {'X-HTTP-Method-Override': operation});
-                  }
-                  
-                  if (config.isSafe(operation)) {
-                    if (isOverrideOperation) {
-                      urlHandler.resource(this, $http, callHeaders, request.params, 
-                        what)[callOperation]({}).then(okCallback, errorCallback);
-                    } else {
-                      urlHandler.resource(this, $http, callHeaders, request.params, 
-                        what)[callOperation]().then(okCallback, errorCallback);
-                    }
+
+                      if (config.isSafe(operation)) {
+                          if (isOverrideOperation) {
+                              urlHandler.resource(this, $http, callHeaders, request.params,
+                                what)[callOperation]({}).then(okCallback, errorCallback);
+                          } else {
+                              urlHandler.resource(this, $http, callHeaders, request.params,
+                                what)[callOperation]().then(okCallback, errorCallback);
+                          }
+                        } else {
+                            urlHandler.resource(this, $http, callHeaders, request.params,
+                              what)[callOperation](request.element).then(okCallback, errorCallback);
+                      }
+                  }, this);
+
+
+                  var deferredRequest = $q.defer();
+                  deferredRequest.promise.then(processRequest);
+
+                  if ('promise' in request) {
+                      request.promise.then(function(resolvedRequest) {
+                          deferredRequest.resolve(resolvedRequest);
+                      }, function(e) {
+                          deferredRequest.reject(e);
+                      });
                   } else {
-                      urlHandler.resource(this, $http, callHeaders, request.params, 
-                        what)[callOperation](request.element).then(okCallback, errorCallback);
+                      $timeout(function() {
+                          processRequest(request);
+                      });
                   }
-                  
+
                   return restangularizePromise(deferred.promise);
               }
               
